@@ -76,6 +76,37 @@ export function createMindServer(port = 8080) {
             inGameAgents[agentName].emit('chat-message', curAgentName, json);
         });
 
+        socket.on('bot-chat-sent', (agentName, message) => {
+            if (!inGameAgents[agentName]) {
+                console.warn(`Agent ${agentName} not logged in, cannot process bot-chat-sent via MindServer.`); // Updated warning message
+                return
+            }
+            try {
+                console.log(`Agent ${agentName} sent chat (for broadcast): ${message}`);
+                // Broadcast this to other connected clients (like a Python wrapper)
+                socket.broadcast.emit('agent-chat-sent', { agentName, message });
+                // --- REMOVE THE LINE BELOW ---
+                // inGameAgents[agentName].emit('send-message', agentName, message) // This line causes the loop
+            } catch (error) {
+                console.error('Error processing bot-chat-sent: ', error); // Updated error message
+            }
+        });
+
+        // --- Add this handler ---
+        // Assuming the Python wrapper sends an event like this:
+        // socket.emit('execute-chat', targetAgentName, chatMessage);
+        socket.on('execute-chat', (agentName, message) => {
+            if (inGameAgents[agentName]) {
+                console.log(`Relaying execute-chat command to agent ${agentName}: ${message}`);
+                inGameAgents[agentName].emit('execute-chat', message);
+            } else {
+                console.warn(`Cannot execute chat for non-logged-in agent: ${agentName}`);
+                // Optionally send an error back to the Python client
+                // socket.emit('execute-chat-error', { agentName, message: 'Agent not found or not logged in' });
+            }
+        });
+        // --- End of added handler ---
+
         socket.on('restart-agent', (agentName) => {
             console.log(`Restarting agent: ${agentName}`);
             inGameAgents[agentName].emit('restart-agent');
@@ -114,6 +145,19 @@ export function createMindServer(port = 8080) {
             setTimeout(() => {
                 process.exit(0);
             }, 2000);
+});
+
+		socket.on('send-message', (agentName, message) => {
+			if (!inGameAgents[agentName]) {
+				console.warn(`Agent ${agentName} not logged in, cannot send message via MindServer.`);
+				return
+			}
+			try {
+				console.log(`Sending message to agent ${agentName}: ${message}`);
+				inGameAgents[agentName].emit('send-message', agentName, message)
+			} catch (error) {
+				console.error('Error: ', error);
+			}
         });
 
 		socket.on('send-message', (agentName, message) => {
@@ -160,4 +204,4 @@ function stopAllAgents() {
 // Optional: export these if you need access to them from other files
 export const getIO = () => io;
 export const getServer = () => server;
-export const getConnectedAgents = () => connectedAgents; 
+export const getConnectedAgents = () => connectedAgents;

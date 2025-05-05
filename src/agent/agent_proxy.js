@@ -50,6 +50,13 @@ class AgentServerProxy {
 				console.error('Error: ', JSON.stringify(error, Object.getOwnPropertyNames(error)));
 			}
 		});
+        this.socket.on('execute-chat', (message) => {
+            if (this.agent && this.agent.bot) {
+                console.log(`Executing chat command from external source: ${message}`);
+                // Note: This directly calls the wrapped bot.chat, so it will also trigger the 'botChatSent' event
+                this.agent.bot.chat(message);
+            }
+        });
     }
 
     login() {
@@ -62,6 +69,11 @@ class AgentServerProxy {
 
     getSocket() {
         return this.socket;
+    }
+    sendChatNotification(message) {
+        if (this.socket && this.connected) {
+            this.socket.emit('bot-chat-sent', this.agent.name, message);
+        }
     }
 }
 

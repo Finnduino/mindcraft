@@ -24,9 +24,9 @@ export class Agent {
         if (!profile_fp) {
             throw new Error('No profile filepath provided');
         }
-        
+
         console.log('Starting agent initialization with profile:', profile_fp);
-        
+
         // Initialize components with more detailed error handling
         console.log('Initializing action manager...');
         this.actions = new ActionManager(this);
@@ -43,7 +43,7 @@ export class Agent {
         this.memory_bank = new MemoryBank();
         console.log('Initializing self prompter...');
         this.self_prompter = new SelfPrompter(this);
-        convoManager.initAgent(this);            
+        convoManager.initAgent(this);
         console.log('Initializing examples...');
         await this.prompter.initExamples();
         console.log('Initializing task...');
@@ -67,7 +67,7 @@ export class Agent {
             console.log(this.name, 'logged in!');
 
             serverProxy.login();
-            
+
             // Set skin for profile, requires Fabric Tailor. (https://modrinth.com/mod/fabrictailor)
             if (this.prompter.profile.skin)
                 this.bot.chat(`/skin set URL ${this.prompter.profile.skin.model} ${this.prompter.profile.skin.path}`);
@@ -85,7 +85,7 @@ export class Agent {
 
                 // wait for a bit so stats are not undefined
                 await new Promise((resolve) => setTimeout(resolve, 1000));
-                
+
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
 
@@ -115,7 +115,7 @@ export class Agent {
             "Set the weather to",
             "Gamerule "
         ];
-        
+
         const respondFunc = async (username, message) => {
             if (username === this.name) return;
             if (settings.only_chat_with.length > 0 && !settings.only_chat_with.includes(username)) return;
@@ -137,12 +137,22 @@ export class Agent {
                 console.error('Error handling message:', error);
             }
         }
-		
-		this.respondFunc = respondFunc
+
+        this.respondFunc = respondFunc
 
         this.bot.on('whisper', respondFunc);
         if (settings.profiles.length === 1)
             this.bot.on('chat', respondFunc);
+
+        // --- Add this section to wrap bot.chat ---
+        const originalChat = this.bot.chat;
+        this.bot.chat = (message) => {
+            // Call the original function first
+            originalChat.call(this.bot, message);
+            // Emit a custom event with the message
+            this.bot.emit('botChatSent', message);
+        };
+        // --- End of added section ---
 
         // Set up auto-eat
         this.bot.autoEat.options = {
@@ -227,7 +237,7 @@ export class Agent {
                     this.history.add(source, message);
                 }
                 let execute_res = await executeCommand(this, message);
-                if (execute_res) 
+                if (execute_res)
                     this.routeResponse(source, execute_res);
                 return true;
             }
@@ -241,7 +251,7 @@ export class Agent {
         console.log('received message from', source, ':', message);
 
         const checkInterrupt = () => this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
-        
+
         let behavior_log = this.bot.modes.flushBehaviorLog().trim();
         if (behavior_log.length > 0) {
             const MAX_LOG = 500;
@@ -264,8 +274,8 @@ export class Agent {
             let res = await this.prompter.promptConvo(history);
 
             console.log(`${this.name} full response to ${source}: ""${res}""`);
-            
-            if (res.trim().length === 0) { 
+
+            if (res.trim().length === 0) {
                 console.warn('no response')
                 break; // empty response ends loop
             }
@@ -275,7 +285,7 @@ export class Agent {
             if (command_name) { // contains query or command
                 res = truncCommandMessage(res); // everything after the command is ignored
                 this.history.add(this.name, res);
-                
+
                 if (!commandExists(command_name)) {
                     this.history.add('system', `Command ${command_name} does not exist.`);
                     console.warn('Agent hallucinated command:', command_name)
@@ -311,7 +321,7 @@ export class Agent {
                 this.routeResponse(source, res);
                 break;
             }
-            
+
             this.history.save();
         }
 
@@ -357,9 +367,9 @@ export class Agent {
             }
         }
         else {
-	    if (settings.speak) {
+        if (settings.speak) {
             say(to_translate);
-	    }
+        }
             this.bot.chat(message);
         }
     }
@@ -423,6 +433,13 @@ export class Agent {
             this.actions.resumeAction();
         });
 
+        // --- Add this listener ---
+        this.bot.on('botChatSent', (message) => {
+            // Send the chat message through the server proxy
+            serverProxy.sendChatNotification(message);
+        });
+        // --- End of added listener ---
+
         // Init NPC controller
         this.npc.init();
 
@@ -461,7 +478,7 @@ export class Agent {
     isIdle() {
         return !this.actions.executing;
     }
-    
+
     cleanKill(msg='Killing agent process...', code=1) {
         this.history.add('system', msg);
         this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
