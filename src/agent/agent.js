@@ -241,6 +241,19 @@ export class Agent {
             return false;
         }
 
+        // Emit context update for received message
+        const ignore_messages = [
+            "Set own game mode to",
+            "Set the time to",
+            "Set the difficulty to",
+            "Teleported ",
+            "Set the weather to",
+            "Gamerule "
+        ];
+        if (!ignore_messages.some((m) => message.startsWith(m))) {
+            serverProxy.emitContextUpdate('received-message', { agentName: this.name, source, message });
+        }
+
         let used_command = false;
         if (max_responses === null) {
             max_responses = settings.max_commands === -1 ? Infinity : settings.max_commands;
@@ -300,14 +313,20 @@ export class Agent {
         for (let i=0; i<max_responses; i++) {
             if (checkInterrupt()) break;
             let history = this.history.getHistory();
+            let prompt = this.prompter.profile.conversing;
+            prompt = await this.prompter.replaceStrings(prompt, history, this.prompter.convo_examples);
+
+            // Emit LLM Prompting context
+            //serverProxy.emitContextUpdate('llm-prompting', { agentName: this.name, source, prompt, history });
+            serverProxy.emitContextUpdate('llm-prompting', { agentName: this.name, history });
+            
+            
             let res = await this.prompter.promptConvo(history);
 
-            console.log(`${this.name} full response to ${source}: ""${res}""`);
+            // Emit LLM Response context
+            serverProxy.emitContextUpdate('llm-response', { agentName: this.name, source, response: res });
 
-            if (res.trim().length === 0) {
-                console.warn('no response')
-                break; // empty response ends loop
-            }
+            console.log(`${this.name} full response to ${source}: ""${res}""`);
 
             let command_name = containsCommand(res);
 
@@ -355,6 +374,42 @@ export class Agent {
         }
 
         return used_command;
+    }
+
+    async handleExternalCommand(commandString) {
+        console.log(`Received external command: ${commandString}`);
+        // Add to history to show the external LLM initiated this
+        await this.history.add('ExternalLLM', commandString);
+        await this.history.save();
+
+        let command_name = containsCommand(commandString);
+        if (command_name) {
+            if (!commandExists(command_name)) {
+                const errorMsg = `External command '${command_name}' does not exist.`;
+                console.warn(errorMsg);
+                await this.history.add('system', errorMsg);
+                await this.history.save();
+                // Optionally emit an error back?
+                serverProxy.emitContextUpdate('external-command-error', { agentName: this.name, command: commandString, error: errorMsg });
+                return;
+            }
+
+            // Execute the command
+            let execute_res = await executeCommand(this, commandString);
+            console.log('External command executed:', command_name, 'and got:', execute_res);
+
+            if (execute_res) {
+                await this.history.add('system', execute_res);
+                await this.history.save();
+            }
+            serverProxy.emitContextUpdate('external-command-result', { agentName: this.name, command: commandString, result: execute_res });
+
+        } else {
+            // If it's not a command, treat it as chat?
+            console.log('External input is not a command, treating as chat.');
+            this.openChat(`(From External) ${commandString}`);
+            serverProxy.emitContextUpdate('external-command-result', { agentName: this.name, command: commandString, result: 'Sent as chat message' });
+        }
     }
 
     async routeResponse(to_player, message) {
@@ -514,8 +569,15 @@ export class Agent {
             if (res) {
                 await this.history.add('system', `Task ended with score : ${res.score}`);
                 await this.history.save();
-                // await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 second for save to complete
                 console.log('Task finished:', res.message);
+
+                // Emit context update for task completion
+                try {
+                    serverProxy.emitContextUpdate('task-completed', { agentName: this.name, taskId: this.task.id, result: res });
+                } catch (e) {
+                    console.error("Error emitting task-completed update:", e);
+                }
+
                 this.killAll();
             }
         }

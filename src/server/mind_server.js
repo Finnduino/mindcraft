@@ -105,7 +105,44 @@ export function createMindServer(port = 8080) {
                 // socket.emit('execute-chat-error', { agentName, message: 'Agent not found or not logged in' });
             }
         });
-        // --- End of added handler ---
+
+        // Handler for context updates from agents
+        socket.on('context-update', (updateType, data) => {
+            console.log(`Received context update from agent ${data.agentName}: ${updateType}`);
+            // Broadcast the update to all connected clients (including the Python wrapper)
+            io.emit('context-update', updateType, data);
+        });
+
+        // Handler for LLM prompting context
+        socket.on('llm-prompting', (data) => {
+            console.log(`Received llm-prompting update from agent ${data.agentName}`);
+            io.emit('llm-prompting', data); // Broadcast to clients
+        });
+
+        // Handler for LLM response context
+        socket.on('llm-response', (data) => {
+            console.log(`Received llm-response update from agent ${data.agentName}`);
+            io.emit('llm-response', data); // Broadcast to clients
+        });
+
+        // Handler for external commands from clients (e.g., Python wrapper)
+        socket.on('external-command', (targetAgentName, commandString) => {
+            if (inGameAgents[targetAgentName]) {
+                console.log(`Relaying external command to agent ${targetAgentName}: ${commandString}`);
+                inGameAgents[targetAgentName].emit('external-command', commandString);
+            } else {
+                console.warn(`Cannot relay external command to non-logged-in agent: ${targetAgentName}`);
+                // Optionally send an error back to the client
+                socket.emit('external-command-error', { agentName: targetAgentName, command: commandString, error: 'Agent not found or not logged in' });
+            }
+        });
+
+        // --- Add this handler ---
+        // Assuming the Python wrapper sends an event like this:
+        socket.on('user-command', (commandData) => {
+            console.log(`Received user command: ${commandData}`);
+            // Process the user command here
+        });
 
         socket.on('restart-agent', (agentName) => {
             console.log(`Restarting agent: ${agentName}`);
@@ -147,18 +184,6 @@ export function createMindServer(port = 8080) {
             }, 2000);
 });
 
-		socket.on('send-message', (agentName, message) => {
-			if (!inGameAgents[agentName]) {
-				console.warn(`Agent ${agentName} not logged in, cannot send message via MindServer.`);
-				return
-			}
-			try {
-				console.log(`Sending message to agent ${agentName}: ${message}`);
-				inGameAgents[agentName].emit('send-message', agentName, message)
-			} catch (error) {
-				console.error('Error: ', error);
-			}
-        });
 
 		socket.on('send-message', (agentName, message) => {
 			if (!inGameAgents[agentName]) {

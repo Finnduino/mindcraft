@@ -57,6 +57,19 @@ class AgentServerProxy {
                 this.agent.bot.chat(message);
             }
         });
+
+        this.socket.on('external-command', (commandString) => {
+            console.log(`Received external command via proxy: ${commandString}`);
+            if (this.agent && this.agent.handleExternalCommand) {
+                this.agent.handleExternalCommand(commandString);
+            }
+        });
+    }
+
+    emitContextUpdate(agentName, context) {
+        if (this.socket && this.connected) {
+            this.socket.emit('context-update', agentName, context);
+        }
     }
 
     login() {
@@ -66,6 +79,7 @@ class AgentServerProxy {
     shutdown() {
         this.socket.emit('shutdown');
     }
+
 
     getSocket() {
         return this.socket;

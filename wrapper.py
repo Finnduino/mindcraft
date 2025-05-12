@@ -59,6 +59,55 @@ def on_agent_chat_sent(data):
     message = data.get('message', '[no message content]')
     print(f"\n[{agent_name} sent chat]: {message}\n> ", end='')
 
+@sio.on('context-update')
+def on_context_update(update_type, data):
+    """Handles context updates forwarded by the server."""
+    agent_name = data.get('agentName', 'Unknown Agent')
+    print(f"\n[Context Update for {agent_name} - Type: {update_type}]:")
+    # Pretty print the data dictionary
+    import json
+    print(json.dumps(data, indent=2))
+    print("> ", end='')
+
+@sio.on('llm-prompting')
+def on_llm_prompting(data):
+    """Handles LLM prompting context updates."""
+    agent_name = data.get('agentName', 'Unknown Agent')
+    print(f"\n[LLM Prompting for {agent_name}]:")
+    import json
+    print(json.dumps(data, indent=2))
+    print("> ", end='')
+
+@sio.on('llm-response')
+def on_llm_response(data):
+    """Handles LLM response context updates."""
+    agent_name = data.get('agentName', 'Unknown Agent')
+    print(f"\n[LLM Response from {agent_name}]:")
+    import json
+    print(json.dumps(data, indent=2))
+    print("> ", end='')
+
+@sio.on('external-command-error')
+def on_external_command_error(data):
+    """Handles errors when sending external commands."""
+    agent_name = data.get('agentName', 'Unknown Agent')
+    command = data.get('command', '')
+    error = data.get('error', 'Unknown error')
+    print(f"\n[External Command Error for {agent_name}]:")
+    print(f"Command: {command}")
+    print(f"Error: {error}")
+    print("> ", end='')
+
+@sio.on('external-command-result')
+def on_external_command_result(data):
+    """Handles results after an external command is processed by the agent."""
+    agent_name = data.get('agentName', 'Unknown Agent')
+    command = data.get('command', '')
+    result = data.get('result', 'No result info')
+    print(f"\n[External Command Result for {agent_name}]:")
+    print(f"Command: {command}")
+    print(f"Result: {result}")
+    print("> ", end='')
 
 # --- Client Functions to Send Messages/Commands ---
 
@@ -80,6 +129,14 @@ def execute_agent_chat(target_agent_name, message):
     # This emits the 'execute-chat' event handled starting at line 126 in mind_server.js
     sio.emit('execute-chat', (target_agent_name, message))
 
+def send_external_command(target_agent_name, command_string):
+    """Sends a command string to a specific agent via the server's 'external-command' route."""
+    if not target_agent_name or not command_string:
+        print("Error: Target agent name and command string cannot be empty.")
+        return
+    print(f"Sending external command to {target_agent_name}: {command_string}")
+    sio.emit('external-command', (target_agent_name, command_string))
+
 # --- Main Execution ---
 if __name__ == '__main__':
     try:
@@ -89,7 +146,8 @@ if __name__ == '__main__':
         print("\nPython messaging client connected. Listening for events.")
         print("You can call functions like:")
         print("  send_message_to_agent('TargetAgentName', 'Your message or !command')")
-        print("  execute_agent_chat('TargetAgentName', 'Message for bot to say')") # Added command info
+        print("  execute_agent_chat('TargetAgentName', 'Message for bot to say')")
+        print("  send_external_command('TargetAgentName', '!commandToExecute(args)')") # Added command info
         print("Type 'exit' to quit.")
 
         while True:
@@ -100,10 +158,10 @@ if __name__ == '__main__':
                 # Basic command execution (for demonstration)
                 try:
                     # Allow calling functions directly
-                    if cmd.startswith("send_message_to_agent") or cmd.startswith("execute_agent_chat"): # Updated condition
+                    if cmd.startswith("send_message_to_agent") or cmd.startswith("execute_agent_chat") or cmd.startswith("send_external_command"): # Updated condition
                          exec(cmd)
                     else:
-                         print("Unknown command. Try: send_message_to_agent(...) or execute_agent_chat(...)") # Updated help
+                         print("Unknown command. Try: send_message_to_agent(...), execute_agent_chat(...) or send_external_command(...)") # Updated help
                 except Exception as e:
                     print(f"Error executing command: {e}")
             except KeyboardInterrupt:
