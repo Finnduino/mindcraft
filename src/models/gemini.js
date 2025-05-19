@@ -36,7 +36,7 @@ export class Gemini {
     async sendRequest(turns, systemMessage) {
         let model;
         const modelConfig = {
-            model: this.model_name || "gemini-1.5-flash",
+            model: this.model_name || "gemini-2.0-flash-lite",
             // systemInstruction does not work bc google is trash
         };
         if (this.url) {
@@ -100,13 +100,13 @@ export class Gemini {
         let model;
         if (this.url) {
             model = this.genAI.getGenerativeModel(
-                { model: this.model_name || "gemini-1.5-flash" },
+                { model: this.model_name || "gemini-2.0-flash-lite" },
                 { baseUrl: this.url },
                 { safetySettings: this.safetySettings }
             );
         } else {
             model = this.genAI.getGenerativeModel(
-                { model: this.model_name || "gemini-1.5-flash" },
+                { model: this.model_name || "gemini-2.0-flash-lite" },
                 { safetySettings: this.safetySettings }
             );
         }

@@ -321,22 +321,36 @@ export class Prompter {
         this.last_prompt_time = Date.now();
     }
 
-    async promptConvo(messages) {
+    async promptConvo(messages) { // 'messages' is the history array from the llm-prompting log
         this.most_recent_msg_time = Date.now();
         let current_msg_time = this.most_recent_msg_time;
 
-        for (let i = 0; i < 3; i++) { // try 3 times to avoid hallucinations
+        for (let i = 0; i < 3; i++) {
             await this.checkCooldown();
             if (current_msg_time !== this.most_recent_msg_time) {
                 return '';
             }
 
+            // Ensure content is a string before trimming, and filter out empty/whitespace-only content
+            const validMessagesForAPI = messages.filter(msg => msg.content && typeof msg.content === 'string' && msg.content.trim().length > 0);
+
+            if (validMessagesForAPI.length === 0 && messages.length > 0) {
+                console.warn(`${this.agent.name}: All history messages are empty after trimming. Cannot prompt LLM for this turn.`);
+                // Potentially log the original 'messages' here to see what was filtered out
+                // console.warn('Original messages before filtering:', JSON.stringify(messages, null, 2));
+                return ''; 
+            }
+
+            // Add this log to see exactly what is about to be sent
+            console.log(`[DEBUG Prompter.promptConvo] Filtered messages for API:`, JSON.stringify(validMessagesForAPI, null, 2));
+
             let prompt = this.profile.conversing;
-            prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
+            prompt = await this.replaceStrings(prompt, messages, this.convo_examples); // Note: uses original 'messages' for replaceStrings
             let generation;
 
             try {
-                generation = await this.chat_model.sendRequest(messages, prompt);
+                // CRITICAL: Ensure validMessagesForAPI is passed here, not the original 'messages'
+                generation = await this.chat_model.sendRequest(validMessagesForAPI, prompt); 
                 if (typeof generation !== 'string') {
                     console.error('Error: Generated response is not a string', generation);
                     throw new Error('Generated response is not a string');
