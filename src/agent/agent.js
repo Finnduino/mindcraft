@@ -323,6 +323,11 @@ export class Agent {
             
             let res = await this.prompter.promptConvo(history);
 
+            if (res.trim().length === 0) {
+                console.warn('no response')
+                break; // empty response ends loop
+            }
+
             // Emit LLM Response context
             serverProxy.emitContextUpdate('llm-response', { agentName: this.name, source, response: res });
 
