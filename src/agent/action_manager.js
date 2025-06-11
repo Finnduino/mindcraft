@@ -1,3 +1,5 @@
+import assert from 'assert';
+
 export class ActionManager {
     constructor(agent) {
         this.agent = agent;
@@ -11,10 +13,10 @@ export class ActionManager {
     }
 
     async resumeAction(actionFn, timeout) {
-        return this._executeResume(actionFn, timeout);
+        return await this.runAction(this.resume_name || 'resumed_action', actionFn || this.resume_func, { resume: true, timeout: timeout || 10 });
     }
 
-    async runAction(actionLabel, actionFn, { timeout, resume = false } = {}) {
+    async runAction(actionLabel, actionFn, { timeout = 10, resume = false } = {}) {
         if (resume) {
             return this._executeResume(actionLabel, actionFn, timeout);
         } else {
@@ -42,18 +44,70 @@ export class ActionManager {
 
     async _executeResume(actionLabel = null, actionFn = null, timeout = 10) {
         const new_resume = actionFn != null;
-        if (new_resume) { // start new resume
+        if (new_resume) {
             this.resume_func = actionFn;
             assert(actionLabel != null, 'actionLabel is required for new resume');
             this.resume_name = actionLabel;
         }
         if (this.resume_func != null && (this.agent.isIdle() || new_resume) && (!this.agent.self_prompter.isActive() || new_resume)) {
             this.currentActionLabel = this.resume_name;
-            let res = await this._executeAction(this.resume_name, this.resume_func, timeout);
+            // Don't call _executeAction here as it will trigger _tryResumeFromStack again!
+            // Instead, execute the resume function directly
+            let res = await this._executeActionDirect(this.resume_name, this.resume_func, timeout);
             this.currentActionLabel = '';
+            this.cancelResume(); // Clear resume after execution
             return res;
         } else {
             return { success: false, message: null, interrupted: false, timedout: false };
+        }
+    }
+
+    // New direct execution method that doesn't trigger task stack logic
+    async _executeActionDirect(actionLabel, actionFn, timeout = 10) {
+        let TIMEOUT;
+        try {
+            console.log(`Resuming action: ${actionLabel}`);
+            
+            this.executing = true;
+            this.currentActionLabel = actionLabel;
+            this.currentActionFn = actionFn;
+
+            if (timeout > 0) {
+                TIMEOUT = this._startTimeout(timeout);
+            }
+
+            await actionFn();
+
+            this.executing = false;
+            this.currentActionLabel = '';
+            this.currentActionFn = null;
+            clearTimeout(TIMEOUT);
+
+            let output = this.getBotOutputSummary();
+            let interrupted = this.agent.bot.interrupt_code;
+            let timedout = this.timedout;
+            this.agent.clearBotLogs();
+
+            if (!interrupted) {
+                this.agent.bot.emit('idle');
+            }
+
+            return { success: true, message: output, interrupted, timedout };
+        } catch (err) {
+            this.executing = false;
+            this.currentActionLabel = '';
+            this.currentActionFn = null;
+            clearTimeout(TIMEOUT);
+            console.error("Resume execution error:", err);
+            
+            let message = this.getBotOutputSummary() + '!!Resume threw exception!!\nError: ' + err.toString();
+            let interrupted = this.agent.bot.interrupt_code;
+            this.agent.clearBotLogs();
+            
+            if (!interrupted) {
+                this.agent.bot.emit('idle');
+            }
+            return { success: false, message, interrupted, timedout: false };
         }
     }
 
@@ -72,49 +126,40 @@ export class ActionManager {
                 });
             }
 
-
-            // await current action to finish (executing=false), with 10 seconds timeout
-            // also tell agent.bot to stop various actions
             if (this.executing) {
                 console.log(`action "${actionLabel}" trying to interrupt current action "${this.currentActionLabel}"`);
             }
             await this.stop();
 
-            // clear bot logs and reset interrupt code
             this.agent.clearBotLogs();
 
             this.executing = true;
             this.currentActionLabel = actionLabel;
             this.currentActionFn = actionFn;
 
-            // timeout in minutes
             if (timeout > 0) {
                 TIMEOUT = this._startTimeout(timeout);
             }
 
-            // start the action
             await actionFn();
 
-            // mark action as finished + cleanup
             this.executing = false;
             this.currentActionLabel = '';
             this.currentActionFn = null;
             clearTimeout(TIMEOUT);
 
+            // Try to resume from stack after completing current action
             this._tryResumeFromStack();
 
-            // get bot activity summary
             let output = this.getBotOutputSummary();
             let interrupted = this.agent.bot.interrupt_code;
             let timedout = this.timedout;
             this.agent.clearBotLogs();
 
-            // if not interrupted and not generating, emit idle event
             if (!interrupted) {
                 this.agent.bot.emit('idle');
             }
 
-            // return action status report
             return { success: true, message: output, interrupted, timedout };
         } catch (err) {
             this.executing = false;
@@ -123,18 +168,11 @@ export class ActionManager {
             clearTimeout(TIMEOUT);
             this.cancelResume();
             console.error("Code execution triggered catch:", err);
-            // Log the full stack trace
-            console.error(err.stack);
-            await this.stop();
-            err = err.toString();
-
-            let message = this.getBotOutputSummary() +
-                '!!Code threw exception!!\n' +
-                'Error: ' + err + '\n' +
-                'Stack trace:\n' + err.stack+'\n';
-
+            
+            let message = this.getBotOutputSummary() + '!!Code threw exception!!\nError: ' + err.toString();
             let interrupted = this.agent.bot.interrupt_code;
             this.agent.clearBotLogs();
+            
             if (!interrupted) {
                 this.agent.bot.emit('idle');
             }
@@ -142,32 +180,26 @@ export class ActionManager {
         }
     }
 
-        // New method to try resuming from the task stack
     _tryResumeFromStack() {
-        if (this.taskStack.length > 0 && !this.executing) {
+        if (this.taskStack.length > 0 && !this.executing && this.agent.isIdle()) {
             const previousTask = this.taskStack.pop();
             console.log(`Attempting to resume previous task: "${previousTask.label}"`);
             
-            // Set this as the resume function
-            this.resume_func = previousTask.actionFn;
-            this.resume_name = previousTask.label;
-            
-            // Automatically resume if agent is idle
-            if (this.agent.isIdle()) {
-                setTimeout(() => {
-                    this.resumeAction(previousTask.actionFn, 10);
-                }, 1000); // Small delay to ensure clean state
-            }
+            // Schedule resume with a small delay to ensure clean state
+            setTimeout(async () => {
+                if (!this.executing && this.agent.isIdle()) {
+                    console.log(`Resuming task: ${previousTask.label}`);
+                    await this.runAction(previousTask.label, previousTask.actionFn, { resume: true });
+                }
+            }, 1000);
         }
     }
 
-    // Add method to clear the task stack (useful for major state changes)
     clearTaskStack() {
         console.log(`Clearing ${this.taskStack.length} tasks from stack`);
         this.taskStack = [];
     }
 
-    // Add method to get stack info for debugging
     getTaskStackInfo() {
         return this.taskStack.map(task => ({
             label: task.label,
@@ -197,8 +229,7 @@ export class ActionManager {
             console.warn(`Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
             this.timedout = true;
             this.agent.history.add('system', `Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
-            await this.stop(); // last attempt to stop
+            await this.stop();
         }, TIMEOUT_MINS * 60 * 1000);
     }
-
 }
