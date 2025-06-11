@@ -7,6 +7,7 @@ export class ActionManager {
         this.timedout = false;
         this.resume_func = null;
         this.resume_name = '';
+        this.taskStack = [];
     }
 
     async resumeAction(actionFn, timeout) {
@@ -60,6 +61,17 @@ export class ActionManager {
         let TIMEOUT;
         try {
             console.log('executing code...\n');
+            
+            // If there's currently an executing action, save it to the stack
+            if (this.executing && this.currentActionFn) {
+                console.log(`Saving interrupted action "${this.currentActionLabel}" to task stack`);
+                this.taskStack.push({
+                    label: this.currentActionLabel,
+                    actionFn: this.currentActionFn,
+                    timestamp: Date.now()
+                });
+            }
+
 
             // await current action to finish (executing=false), with 10 seconds timeout
             // also tell agent.bot to stop various actions
@@ -88,6 +100,8 @@ export class ActionManager {
             this.currentActionLabel = '';
             this.currentActionFn = null;
             clearTimeout(TIMEOUT);
+
+            this._tryResumeFromStack();
 
             // get bot activity summary
             let output = this.getBotOutputSummary();
@@ -126,6 +140,40 @@ export class ActionManager {
             }
             return { success: false, message, interrupted, timedout: false };
         }
+    }
+
+        // New method to try resuming from the task stack
+    _tryResumeFromStack() {
+        if (this.taskStack.length > 0 && !this.executing) {
+            const previousTask = this.taskStack.pop();
+            console.log(`Attempting to resume previous task: "${previousTask.label}"`);
+            
+            // Set this as the resume function
+            this.resume_func = previousTask.actionFn;
+            this.resume_name = previousTask.label;
+            
+            // Automatically resume if agent is idle
+            if (this.agent.isIdle()) {
+                setTimeout(() => {
+                    this.resumeAction(previousTask.actionFn, 10);
+                }, 1000); // Small delay to ensure clean state
+            }
+        }
+    }
+
+    // Add method to clear the task stack (useful for major state changes)
+    clearTaskStack() {
+        console.log(`Clearing ${this.taskStack.length} tasks from stack`);
+        this.taskStack = [];
+    }
+
+    // Add method to get stack info for debugging
+    getTaskStackInfo() {
+        return this.taskStack.map(task => ({
+            label: task.label,
+            timestamp: task.timestamp,
+            age: Date.now() - task.timestamp
+        }));
     }
 
     getBotOutputSummary() {
